@@ -4,6 +4,9 @@ const THREE = await import("./node_modules/three/build/three.module.js").catch((
 
 const LAYOUT_STORAGE_KEY = "particle-sphere-layout-v5";
 
+// Set to true to show the on-screen layout tuning panel (sliders + reset/copy).
+const DEBUG = false;
+
 const defaultLayout = {
   main: { x: 5, y: 0.06, z: 0.2, scale: 0.66 },
   layers: [
@@ -312,6 +315,11 @@ function copyLayoutToClipboard() {
 }
 
 function createLayoutControls() {
+  if (!DEBUG) {
+    applyLayout();
+    return;
+  }
+
   const showByDefault =
     new URLSearchParams(window.location.search).has("layout") ||
     new URLSearchParams(window.location.search).has("dev");
@@ -414,7 +422,7 @@ function createLayoutControls() {
   const hint = document.createElement("p");
   hint.className = "layout-panel__hint";
   hint.textContent =
-    "Drag sliders to nudge each circle. Values persist in localStorage. Add ?layout=1 to the URL to open this panel by default.";
+    "Drag sliders to nudge each circle. Values persist in localStorage. Set DEBUG = true in main.js to show this panel.";
   panel.appendChild(hint);
 
   const openPanel = () => {
