@@ -520,6 +520,11 @@ const localRayDirection = new THREE.Vector3();
 const localRay = new THREE.Ray();
 const inverseMatrix = new THREE.Matrix4();
 const localRaycastSphere = new THREE.Sphere(new THREE.Vector3(), sphereRadius);
+const sphereEdgeLocal = new THREE.Vector3(sphereRadius, 0, 0);
+const sphereEdgeWorld = new THREE.Vector3();
+const hoverHitWorld = new THREE.Vector3();
+const hoverNormal = new THREE.Vector3();
+const hoverViewDir = new THREE.Vector3();
 const labelWorldPosition = new THREE.Vector3();
 const labelScreenPosition = new THREE.Vector3();
 const sphereCenterWorld = new THREE.Vector3();
@@ -534,6 +539,9 @@ const annotationLabelPad = 8;
 const annotationHorizMin = 22;
 const annotationHorizMax = 48;
 const annotationMaxCharsPerLine = 18;
+const hoverFacingThreshold = 0.2;
+const hoverScreenRadiusScale = 0.9;
+const hoverIntroMinProgress = 0.85;
 
 let pointerInside = false;
 let targetHover = 0;
@@ -1100,7 +1108,28 @@ function updateHoverFromPointer() {
     return;
   }
 
+  const rect = canvas.getBoundingClientRect();
+  const pointerX = (pointer.x * 0.5 + 0.5) * rect.width;
+  const pointerY = (-pointer.y * 0.5 + 0.5) * rect.height;
+  const hoverReady = introComplete || mainIntroProgress >= hoverIntroMinProgress;
+
   particles.updateMatrixWorld();
+  sphereCenterWorld.setFromMatrixPosition(particles.matrixWorld);
+  sphereEdgeWorld.copy(sphereEdgeLocal).applyMatrix4(particles.matrixWorld);
+  const centerScreen = projectToCanvas(sphereCenterWorld, rect);
+  const edgeScreen = projectToCanvas(sphereEdgeWorld, rect);
+  const screenRadius =
+    Math.hypot(edgeScreen.x - centerScreen.x, edgeScreen.y - centerScreen.y) * hoverScreenRadiusScale;
+  const overScreenDisc =
+    Math.hypot(pointerX - centerScreen.x, pointerY - centerScreen.y) <= screenRadius;
+
+  if (!hoverReady || !overScreenDisc) {
+    targetHover = 0;
+    isOverMainSphere = false;
+    canvas.classList.remove("is-active");
+    return;
+  }
+
   raycaster.setFromCamera(pointer, camera);
   inverseMatrix.copy(particles.matrixWorld).invert();
   localRayOrigin.copy(raycaster.ray.origin).applyMatrix4(inverseMatrix);
@@ -1108,9 +1137,17 @@ function updateHoverFromPointer() {
   localRay.set(localRayOrigin, localRayDirection);
   const hit = localRay.intersectSphere(localRaycastSphere, targetHoverPoint);
 
-  isOverMainSphere = Boolean(hit);
-
+  let onSphere = false;
   if (hit) {
+    hoverHitWorld.copy(targetHoverPoint).applyMatrix4(particles.matrixWorld);
+    hoverNormal.copy(hoverHitWorld).sub(sphereCenterWorld).normalize();
+    hoverViewDir.copy(camera.position).sub(hoverHitWorld).normalize();
+    onSphere = hoverNormal.dot(hoverViewDir) > hoverFacingThreshold;
+  }
+
+  isOverMainSphere = onSphere;
+
+  if (onSphere) {
     hoverPoint.copy(targetHoverPoint);
     targetHover = isDragging ? 0 : 1;
     canvas.classList.add("is-active");
