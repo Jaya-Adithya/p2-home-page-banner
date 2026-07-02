@@ -83,12 +83,12 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  overflow: hidden;
+  overflow: visible;
   z-index: 2;
   color: rgba(255, 255, 255, 0.94);
-  font-size: clamp(0.62rem, 0.74vw, 0.78rem);
+  font-size: clamp(0.54rem, 0.58vw, 0.68rem);
   font-weight: 600;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
@@ -175,17 +175,38 @@ body {
   position: absolute;
   left: var(--label-x, 0px);
   top: var(--label-y, 0px);
-  transform: translate(var(--label-shift, 10px), -50%);
+  transform: translate(var(--label-shift, 8px), -50%);
   white-space: nowrap;
   opacity: 0;
   color: rgba(255, 255, 255, 0.94);
   text-shadow:
     0 0 18px rgba(40, 8, 48, 0.65),
     0 1px 2px rgba(20, 4, 28, 0.45);
+  max-width: min(11rem, 28vw);
+}
+
+.annotation__label--stacked {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.14em;
+  line-height: 1.1;
+  letter-spacing: 0.11em;
+  white-space: normal;
+  max-width: min(9rem, 24vw);
+}
+
+.annotation__word {
+  display: block;
 }
 
 .annotation[data-side="left"] .annotation__label {
-  transform: translate(calc(-100% - 10px), -50%);
+  transform: translate(calc(-100% - 8px), -50%);
+}
+
+.annotation[data-side="left"] .annotation__label--stacked {
+  align-items: flex-end;
+  text-align: right;
 }
 
 .annotation.is-live .annotation__label {

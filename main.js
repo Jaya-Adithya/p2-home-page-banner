@@ -109,6 +109,11 @@ function rand01(i, salt) {
 const CLOUD_INNER = 1.45;
 const CLOUD_SPREAD = 2.3;
 
+// Fraction of a layer's intro each particle spends in transit. Birth delays fill
+// the remaining budget so the slowest particle lands exactly at progress 1.
+const particleTransitFraction = 0.88;
+const maxBirthDelay = 1 - particleTransitFraction;
+
 for (let i = 0; i < particleCount; i += 1) {
   const stride = i * 3;
   const y = 1 - (i / (particleCount - 1)) * 2;
@@ -135,7 +140,7 @@ for (let i = 0; i < particleCount; i += 1) {
   mainBaseOrigins[stride + 1] = cloudCosPhi * cloudRadius * 0.8;
   mainBaseOrigins[stride + 2] = Math.sin(cloudTheta) * cloudSinPhi * cloudRadius;
 
-  mainBirthDelays[i] = rand01(i, 4) * 0.55;
+  mainBirthDelays[i] = rand01(i, 4) * maxBirthDelay;
 
   const hueBand = (Math.sin(theta * 0.35) + 1) * 0.5;
   const verticalMix = (y + 1) * 0.5;
@@ -200,7 +205,7 @@ function createSphereSliceGeometry(minX) {
         Math.sin(cloudTheta) * cloudSinPhi * cloudRadius,
       );
       sliceSeeds.push(particleSeeds[i]);
-      sliceBirthDelays.push(rand01(i, saltBase + 3) * 0.55);
+      sliceBirthDelays.push(rand01(i, saltBase + 3) * maxBirthDelay);
 
       const edgeMix = (x - minX) / Math.max(sphereRadius - minX, 0.001);
       const brightness = 0.72 + edgeMix * 0.28;
@@ -516,6 +521,11 @@ const hotspotToCamera = new THREE.Vector3();
 
 const annotationFacingThreshold = 0.18;
 const annotationHideThreshold = 0.05;
+const annotationEdgeMargin = 10;
+const annotationLabelPad = 8;
+const annotationHorizMin = 22;
+const annotationHorizMax = 48;
+const annotationMaxCharsPerLine = 18;
 
 let pointerInside = false;
 let targetHover = 0;
@@ -529,15 +539,18 @@ let lastFrame = performance.now();
 let spinVelocityX = 0;
 let spinVelocityY = 0;
 
-const introStart = performance.now() + 120;
-// Spheres condense left to right (Seed -> Sprout -> Bloom -> main), mirroring the
-// company-growth story: each starts once the previous one is about 50% formed.
-const introLayerDuration = 3000;
-const introStagger = 1000;
+// Intro time accumulates from rendered frames (not wall clock) so a hidden or
+// throttled tab pauses the intro instead of silently skipping it.
+let introClock = 0;
+// Spheres condense left to right; each next one starts while the previous is
+// still forming so the chain reads as one continuous growth (no dead pause).
+const introLayerDuration = 2600;
+const introStagger = Math.round(introLayerDuration * 0.5);
 const introMainDelay = 0;
-// Birth delays span [0, 0.55] and transit takes 0.45, so the slowest particle
-// arrives exactly when its layer's progress reaches 1.
-const particleTransitFraction = 0.8;
+const mainIntroOffset = defaultLayout.layers.length * introStagger + introMainDelay;
+// Once a layer finishes forming, its idle drift eases in over this window
+// instead of snapping on when the whole intro ends.
+const idleBlendMs = 1100;
 let introComplete = false;
 let introAnnotationsReady = false;
 const layerIntroProgress = new Array(layout.layers.length).fill(0);
@@ -635,6 +648,150 @@ function projectToCanvas(worldPosition, rect) {
   };
 }
 
+function splitWordsByMaxChars(words, maxCharsPerLine) {
+  const lines = [];
+  let current = "";
+
+  for (const word of words) {
+    if (!current) {
+      current = word;
+      continue;
+    }
+
+    const candidate = `${current} ${word}`;
+    if (candidate.length <= maxCharsPerLine) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+
+  if (current) {
+    lines.push(current);
+  }
+
+  return lines;
+}
+
+function applyLabelContent(labelEl) {
+  const rawText = (labelEl.dataset.fullText ?? labelEl.textContent).trim();
+  labelEl.dataset.fullText = rawText;
+  const words = rawText.split(/\s+/).filter(Boolean);
+  const lines = splitWordsByMaxChars(words, annotationMaxCharsPerLine);
+  const useStack = lines.length > 1;
+  const layoutKey = useStack ? `${lines.join("|")}:stack` : rawText;
+
+  if (labelEl.dataset.layoutKey === layoutKey) {
+    return useStack;
+  }
+
+  labelEl.dataset.layoutKey = layoutKey;
+  if (useStack) {
+    labelEl.classList.add("annotation__label--stacked");
+    labelEl.replaceChildren(
+      ...lines.map((line) => {
+        const span = document.createElement("span");
+        span.className = "annotation__word";
+        span.textContent = line;
+        return span;
+      }),
+    );
+  } else {
+    labelEl.classList.remove("annotation__label--stacked");
+    labelEl.textContent = rawText;
+  }
+
+  return useStack;
+}
+
+function measureLabelBox(labelEl, labelX, labelY, side) {
+  labelEl.style.left = `${labelX}px`;
+  labelEl.style.top = `${labelY}px`;
+
+  const width = labelEl.offsetWidth;
+  const height = labelEl.offsetHeight;
+  const pad = annotationLabelPad;
+
+  if (side === "right") {
+    return {
+      left: labelX + pad,
+      right: labelX + pad + width,
+      top: labelY - height * 0.5,
+      bottom: labelY + height * 0.5,
+      width,
+      height,
+    };
+  }
+
+  return {
+    left: labelX - pad - width,
+    right: labelX - pad,
+    top: labelY - height * 0.5,
+    bottom: labelY + height * 0.5,
+    width,
+    height,
+  };
+}
+
+function labelFitsViewport(box, viewportW, viewportH) {
+  return (
+    box.left >= annotationEdgeMargin &&
+    box.right <= viewportW - annotationEdgeMargin &&
+    box.top >= annotationEdgeMargin &&
+    box.bottom <= viewportH - annotationEdgeMargin
+  );
+}
+
+function fitAnnotationLabel(annotationEl, elbow, preferredSide, viewportW, viewportH) {
+  const labelEl = annotationEl.querySelector(".annotation__label");
+  applyLabelContent(labelEl);
+
+  const flippedSide = preferredSide === "right" ? "left" : "right";
+  const tries = [
+    { side: preferredSide, horizLen: annotationHorizMax },
+    { side: preferredSide, horizLen: annotationHorizMin + 10 },
+    { side: preferredSide, horizLen: annotationHorizMin },
+    { side: flippedSide, horizLen: annotationHorizMax },
+    { side: flippedSide, horizLen: annotationHorizMin + 10 },
+    { side: flippedSide, horizLen: annotationHorizMin },
+  ];
+
+  let labelY = elbow.y;
+  let fallback = null;
+
+  for (const attempt of tries) {
+    annotationEl.dataset.side = attempt.side;
+    const labelX = elbow.x + (attempt.side === "right" ? attempt.horizLen : -attempt.horizLen);
+    const box = measureLabelBox(labelEl, labelX, labelY, attempt.side);
+
+    if (labelFitsViewport(box, viewportW, viewportH)) {
+      return { x: labelX, y: labelY, side: attempt.side, horizLen: attempt.horizLen };
+    }
+
+    fallback = { x: labelX, y: labelY, side: attempt.side, horizLen: attempt.horizLen, box };
+  }
+
+  if (fallback) {
+    let y = labelY;
+    if (fallback.box.bottom > viewportH - annotationEdgeMargin) {
+      y -= fallback.box.bottom - (viewportH - annotationEdgeMargin);
+    }
+    if (fallback.box.top < annotationEdgeMargin) {
+      y += annotationEdgeMargin - fallback.box.top;
+    }
+    annotationEl.dataset.side = fallback.side;
+    return { x: fallback.x, y, side: fallback.side, horizLen: fallback.horizLen };
+  }
+
+  return {
+    x: elbow.x + (preferredSide === "right" ? annotationHorizMin : -annotationHorizMin),
+    y: elbow.y,
+    side: preferredSide,
+    horizLen: annotationHorizMin,
+  };
+}
+
 function setAnnotationGeometry(annotationEl, anchor, elbow, label, side) {
   annotationEl.style.setProperty("--anchor-x", `${anchor.x}px`);
   annotationEl.style.setProperty("--anchor-y", `${anchor.y}px`);
@@ -723,28 +880,26 @@ function updateHotspots() {
     outwardX /= outwardLen;
     outwardY /= outwardLen;
 
-    const diagLen = 26 + (h % 3) * 7;
-    const horizLen = 44 + (h % 4) * 10;
+    const diagLen = 22 + (h % 3) * 5;
     const diagDirX = outwardX * 0.82;
     const diagDirY = outwardY * 0.65 - 0.38;
     const diagDirLen = Math.hypot(diagDirX, diagDirY) || 1;
+    const preferredSide = outwardX >= 0 ? "right" : "left";
 
     const elbow = {
       x: anchor.x + (diagDirX / diagDirLen) * diagLen,
       y: anchor.y + (diagDirY / diagDirLen) * diagLen,
     };
 
-    const side = outwardX >= 0 ? "right" : "left";
-    const label = {
-      x: elbow.x + (side === "right" ? horizLen : -horizLen),
-      y: elbow.y,
-    };
+    annotationEl.dataset.side = preferredSide;
+    const fitted = fitAnnotationLabel(annotationEl, elbow, preferredSide, width, height);
+    const label = { x: fitted.x, y: fitted.y };
 
     if (!annotationEl.dataset.delay) {
       annotationEl.dataset.delay = `${(h % 5) * 0.06}s`;
     }
 
-    setAnnotationGeometry(annotationEl, anchor, elbow, label, side);
+    setAnnotationGeometry(annotationEl, anchor, elbow, label, fitted.side);
   }
 }
 
@@ -866,9 +1021,10 @@ function animate(now) {
   const elapsed = now * 0.001;
   const delta = Math.min((now - lastFrame) * 0.001, 0.05);
   lastFrame = now;
+  introClock += delta * 1000;
+  const introElapsed = introClock;
 
   if (!introComplete) {
-    const introElapsed = now - introStart;
     let allDone = true;
 
     for (let i = 0; i < maturationLayers.length; i += 1) {
@@ -880,8 +1036,7 @@ function animate(now) {
       entry.sliceMaterial.opacity = entry.config.opacity * easeOutCubic(clamp01(t * 2.2));
     }
 
-    const mainStartOffset = maturationLayers.length * introStagger + introMainDelay;
-    const mt = clamp01((introElapsed - mainStartOffset) / introLayerDuration);
+    const mt = clamp01((introElapsed - mainIntroOffset) / introLayerDuration);
     if (mt < 1) allDone = false;
     mainIntroProgress = mt;
     material.opacity = MAIN_TARGET_OPACITY * easeOutCubic(clamp01(mt * 2.2));
@@ -936,6 +1091,11 @@ function animate(now) {
   const hoverUz = localHoverPoint.z / hoverLen;
 
   const settle = 0.17;
+  const mainIdleBlend = smoothstep(
+    0,
+    1,
+    clamp01((introElapsed - (mainIntroOffset + introLayerDuration)) / idleBlendMs),
+  );
 
   for (let i = 0; i < particleCount; i += 1) {
     const stride = i * 3;
@@ -1000,7 +1160,7 @@ function animate(now) {
         glow = clamp01(pT * 4.5) * (0.55 + 0.45 * eased) + bell * 0.35;
       }
     } else {
-      const pulse = Math.sin(elapsed * 1.45 + seed * 0.00015) * 0.025;
+      const pulse = Math.sin(elapsed * 1.45 + seed * 0.00015) * 0.025 * mainIdleBlend;
       tx = bx + nx * pulse;
       ty = by + ny * pulse;
       tz = bz + nz * pulse;
@@ -1052,7 +1212,7 @@ function animate(now) {
     const pulseSpeed = 1.15 + l * 0.08;
     const swirlSpeed = 0.55 + l * 0.05;
 
-    if (!introComplete) {
+    if (layerIntroProgress[l] < 1) {
       const layerT = layerIntroProgress[l];
       const origins = geom.userData.originPositions;
       const delays = geom.userData.birthDelays;
@@ -1119,8 +1279,15 @@ function animate(now) {
       geom.attributes.color.needsUpdate = true;
       entry.group.rotation.y = entry.config.rotY ?? 0;
     } else {
-      const pulseAmp = 0.028;
-      const swirlAmp = 0.014;
+      // This layer is fully formed; ease its idle drift in from perfect stillness
+      // so there is no snap while later spheres are still condensing.
+      const idleBlend = smoothstep(
+        0,
+        1,
+        clamp01((introElapsed - (l * introStagger + introLayerDuration)) / idleBlendMs),
+      );
+      const pulseAmp = 0.028 * idleBlend;
+      const swirlAmp = 0.014 * idleBlend;
 
       for (let i = 0; i < count; i += 1) {
         const stride = i * 3;
@@ -1145,7 +1312,7 @@ function animate(now) {
       }
 
       entry.group.rotation.y =
-        (entry.config.rotY ?? 0) + Math.sin(elapsed * 0.35 + l * 1.1) * 0.045;
+        (entry.config.rotY ?? 0) + Math.sin(elapsed * 0.35 + l * 1.1) * 0.045 * idleBlend;
     }
 
     geom.attributes.position.needsUpdate = true;
