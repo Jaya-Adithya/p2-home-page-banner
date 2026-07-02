@@ -67,16 +67,22 @@ body {
   display: block;
   width: 100%;
   height: 100%;
-  cursor: grab;
+  cursor: default;
   touch-action: none;
 }
 
 #particle-sphere.is-active {
-  cursor: crosshair;
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cg fill='none' stroke='%23ffffff' stroke-width='1.35' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 4.5c-3.6 0-6.5 2.8-6.5 6.2 0 2.5 2 4.5 2.8 6 .4.7.4 1.4.4 1.8h6.6c0-.4 0-1.1.4-1.8.8-1.5 2.8-3.5 2.8-6 0-3.4-2.9-6.2-6.5-6.2z'/%3E%3Cpath d='M11.3 18.5h5.4'/%3E%3Cpath d='M11.9 20.2h3.2'/%3E%3Cpath d='M12.5 21.9h2'/%3E%3Cpath d='M13.2 23.2h.6'/%3E%3Cpath d='M12.2 14.8 14 12.9l1.8 1.9'/%3E%3Cpath d='M12.2 12.9 14 14.8l1.8-1.9'/%3E%3C/g%3E%3Ctext x='14' y='13.1' text-anchor='middle' fill='%23ffffff' font-size='5' font-weight='700' font-family='Inter,sans-serif'%3EAI%3C/text%3E%3C/svg%3E")
+      14 14,
+    pointer;
 }
 
 #particle-sphere.is-dragging {
-  cursor: grabbing;
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cg fill='none' stroke='%23ffffff' stroke-width='1.35' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 4.5c-3.6 0-6.5 2.8-6.5 6.2 0 2.5 2 4.5 2.8 6 .4.7.4 1.4.4 1.8h6.6c0-.4 0-1.1.4-1.8.8-1.5 2.8-3.5 2.8-6 0-3.4-2.9-6.2-6.5-6.2z'/%3E%3Cpath d='M11.3 18.5h5.4'/%3E%3Cpath d='M11.9 20.2h3.2'/%3E%3Cpath d='M12.5 21.9h2'/%3E%3Cpath d='M13.2 23.2h.6'/%3E%3Cpath d='M12.2 14.8 14 12.9l1.8 1.9'/%3E%3Cpath d='M12.2 12.9 14 14.8l1.8-1.9'/%3E%3C/g%3E%3Ctext x='14' y='13.1' text-anchor='middle' fill='%23ffffff' font-size='5' font-weight='700' font-family='Inter,sans-serif'%3EAI%3C/text%3E%3C/svg%3E")
+      14 14,
+    grabbing;
 }
 
 .annotations {
@@ -162,7 +168,7 @@ body {
 }
 
 .annotation.is-live .annotation__path {
-  animation: annPathDraw 0.85s calc(var(--delay, 0s) + 0.22s) cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: annPathDraw 0.85s calc(var(--delay, 0s) + 0.18s) cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 @keyframes annPathDraw {
@@ -176,41 +182,97 @@ body {
   left: var(--label-x, 0px);
   top: var(--label-y, 0px);
   transform: translate(var(--label-shift, 8px), -50%);
-  white-space: nowrap;
-  opacity: 0;
-  color: rgba(255, 255, 255, 0.94);
-  text-shadow:
-    0 0 18px rgba(40, 8, 48, 0.65),
-    0 1px 2px rgba(20, 4, 28, 0.45);
-  max-width: min(11rem, 28vw);
+  display: inline-block;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  opacity: 1;
+  line-height: 1.15;
+  letter-spacing: 0.1em;
 }
 
-.annotation__label--stacked {
+.annotation__label-inner {
+  position: relative;
+  display: inline-block;
+  width: fit-content;
+  max-width: min(11rem, 28vw);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  filter: drop-shadow(0 2px 10px rgba(40, 8, 48, 0.18));
+}
+
+.annotation__label:not(.annotation__label--stacked) .annotation__label-inner {
+  padding: 0.28em 0.48em;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.94);
+  filter: none;
+  box-shadow: 0 2px 10px rgba(40, 8, 48, 0.18);
+  opacity: 0;
+  transform: translateY(3px);
+}
+
+.annotation__label-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.annotation__label-shape {
+  fill: rgba(255, 255, 255, 0.94);
+}
+
+.annotation__label-lines {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.14em;
-  line-height: 1.1;
-  letter-spacing: 0.11em;
-  white-space: normal;
-  max-width: min(9rem, 24vw);
+  padding: 0.28em 0;
+  box-sizing: border-box;
 }
 
-.annotation__word {
+.annotation__line {
   display: block;
+  width: fit-content;
+  padding: 0 0.48em;
+  line-height: 1.15;
+  background: transparent;
+  opacity: 0;
+  transform: translateY(3px);
+}
+
+.annotation__word-text {
+  display: inline;
+  background: linear-gradient(102deg, #704093 0%, #a13d80 43%, #cc3d68 74%, #dc4d5e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  white-space: nowrap;
 }
 
 .annotation[data-side="left"] .annotation__label {
   transform: translate(calc(-100% - 8px), -50%);
 }
 
-.annotation[data-side="left"] .annotation__label--stacked {
-  align-items: flex-end;
-  text-align: right;
+.annotation__label--stacked .annotation__label-inner {
+  opacity: 0;
+  transform: translateY(3px);
 }
 
-.annotation.is-live .annotation__label {
-  animation: annLabelIn 0.5s calc(var(--delay, 0s) + 0.95s) cubic-bezier(0.22, 1, 0.36, 1) forwards;
+.annotation.is-live .annotation__label:not(.annotation__label--stacked) .annotation__label-inner {
+  animation: annLabelIn 0.42s calc(var(--delay, 0s) + 0.52s) cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.annotation.is-live .annotation__label--stacked .annotation__label-inner {
+  animation: annLabelIn 0.42s calc(var(--delay, 0s) + 0.52s) cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.annotation.is-live .annotation__label--stacked .annotation__line {
+  animation: annWordIn 0.42s calc(var(--delay, 0s) + 0.52s + var(--line-delay, 0s))
+    cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 @keyframes annDotIn {
@@ -234,14 +296,24 @@ body {
 
 @keyframes annLabelIn {
   to {
-    opacity: 0.94;
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes annWordIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .annotation.is-live .annotation__dot,
   .annotation.is-live .annotation__path,
-  .annotation.is-live .annotation__label,
+  .annotation.is-live .annotation__label-inner,
+  .annotation.is-live .annotation__line,
+  .annotation.is-live .annotation__word-text,
   .annotation.is-live .annotation__dot::after {
     animation-duration: 0.01s !important;
     animation-delay: 0s !important;

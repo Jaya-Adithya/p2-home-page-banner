@@ -114,7 +114,7 @@ const CLOUD_SPREAD = 2.3;
 
 // Fraction of a layer's intro each particle spends in transit. Birth delays fill
 // the remaining budget so the slowest particle lands exactly at progress 1.
-const particleTransitFraction = 0.88;
+const particleTransitFraction = 0.93;
 const maxBirthDelay = 1 - particleTransitFraction;
 
 for (let i = 0; i < particleCount; i += 1) {
@@ -546,14 +546,14 @@ let lastDragTime = 0;
 let lastFrame = performance.now();
 let spinVelocityX = 0;
 let spinVelocityY = 0;
+let isOverMainSphere = false;
 
 // Intro time accumulates from rendered frames (not wall clock) so a hidden or
 // throttled tab pauses the intro instead of silently skipping it.
 let introClock = 0;
-// Spheres condense left to right; each next one starts while the previous is
-// still forming so the chain reads as one continuous growth (no dead pause).
-const introLayerDuration = 2600;
-const introStagger = Math.round(introLayerDuration * 0.5);
+// Each next sphere starts when the previous one reaches 50% formation.
+const introLayerDuration = 2400;
+const introStagger = introLayerDuration * 0.24;
 const introMainDelay = 0;
 const mainIntroOffset = defaultLayout.layers.length * introStagger + introMainDelay;
 // Once a layer finishes forming, its idle drift eases in over this window
@@ -682,32 +682,200 @@ function splitWordsByMaxChars(words, maxCharsPerLine) {
   return lines;
 }
 
+const labelShapeNs = "http://www.w3.org/2000/svg";
+
+function getLabelMetrics(labelEl) {
+  const style = getComputedStyle(labelEl);
+  const fontSize = parseFloat(style.fontSize) || 14;
+  return {
+    padX: fontSize * 0.48,
+    padY: fontSize * 0.28,
+    lineHeight: fontSize * 1.15,
+    radius: Math.max(3, fontSize * 0.12),
+  };
+}
+
+function buildSteppedOutline(rects, radius) {
+  const n = rects.length;
+  if (n === 0) {
+    return "";
+  }
+
+  if (n === 1) {
+    const box = rects[0];
+    const w = box.right - box.left;
+    const h = box.bottom - box.top;
+    const r = Math.min(radius, w * 0.5, h * 0.5);
+    return [
+      `M ${box.left + r} ${box.top}`,
+      `H ${box.right - r}`,
+      `Q ${box.right} ${box.top} ${box.right} ${box.top + r}`,
+      `V ${box.bottom - r}`,
+      `Q ${box.right} ${box.bottom} ${box.right - r} ${box.bottom}`,
+      `H ${box.left + r}`,
+      `Q ${box.left} ${box.bottom} ${box.left} ${box.bottom - r}`,
+      `V ${box.top + r}`,
+      `Q ${box.left} ${box.top} ${box.left + r} ${box.top}`,
+      "Z",
+    ].join(" ");
+  }
+
+  const first = rects[0];
+  const last = rects[n - 1];
+  const r = Math.min(radius, 12);
+  let d = `M ${first.left} ${first.top + r}`;
+  d += ` Q ${first.left} ${first.top} ${first.left + r} ${first.top}`;
+  d += ` H ${first.right - r}`;
+  d += ` Q ${first.right} ${first.top} ${first.right} ${first.top + r}`;
+
+  for (let i = 0; i < n - 1; i += 1) {
+    const curr = rects[i];
+    const next = rects[i + 1];
+    const yJoin = curr.bottom;
+    d += ` V ${yJoin - r}`;
+    if (curr.right > next.right + 0.5) {
+      d += ` Q ${curr.right} ${yJoin} ${curr.right - r} ${yJoin}`;
+      d += ` H ${next.right + r}`;
+      d += ` Q ${next.right} ${yJoin} ${next.right} ${yJoin + r}`;
+    } else if (next.right > curr.right + 0.5) {
+      d += ` Q ${curr.right} ${yJoin} ${curr.right + r} ${yJoin}`;
+      d += ` H ${next.right - r}`;
+      d += ` Q ${next.right} ${yJoin} ${next.right} ${yJoin + r}`;
+    } else {
+      d += ` V ${yJoin + r}`;
+    }
+  }
+
+  d += ` V ${last.bottom - r}`;
+  d += ` Q ${last.right} ${last.bottom} ${last.right - r} ${last.bottom}`;
+  d += ` H ${last.left + r}`;
+  d += ` Q ${last.left} ${last.bottom} ${last.left} ${last.bottom - r}`;
+
+  for (let i = n - 1; i > 0; i -= 1) {
+    const curr = rects[i];
+    const prev = rects[i - 1];
+    const yJoin = curr.top;
+    d += ` V ${yJoin + r}`;
+    if (prev.left < curr.left - 0.5) {
+      d += ` Q ${curr.left} ${yJoin} ${curr.left - r} ${yJoin}`;
+      d += ` H ${prev.left + r}`;
+      d += ` Q ${prev.left} ${yJoin} ${prev.left} ${yJoin - r}`;
+    } else if (curr.left < prev.left - 0.5) {
+      d += ` Q ${curr.left} ${yJoin} ${curr.left + r} ${yJoin}`;
+      d += ` H ${prev.left - r}`;
+      d += ` Q ${prev.left} ${yJoin} ${prev.left} ${yJoin - r}`;
+    } else {
+      d += ` V ${yJoin - r}`;
+    }
+  }
+
+  d += ` V ${first.top + r}`;
+  d += " Z";
+  return d;
+}
+
+function updateStackedLabelShape(labelEl, alignRight) {
+  const inner = labelEl.querySelector(".annotation__label-inner");
+  if (!inner) {
+    return;
+  }
+
+  const svg = inner.querySelector(".annotation__label-bg");
+  const pathEl = inner.querySelector(".annotation__label-shape");
+  const linesWrap = inner.querySelector(".annotation__label-lines");
+  const lineEls = [...inner.querySelectorAll(".annotation__line")];
+  if (!svg || !pathEl || lineEls.length < 2) {
+    return;
+  }
+
+  const { padX, padY, lineHeight, radius } = getLabelMetrics(labelEl);
+  const lineWidths = lineEls.map((line) => {
+    const textEl = line.querySelector(".annotation__word-text");
+    return (textEl?.offsetWidth ?? 0) + padX * 2;
+  });
+  const maxW = Math.max(...lineWidths);
+  const totalH = padY * 2 + lineHeight * lineEls.length;
+  const rects = lineWidths.map((width, index) => {
+    const left = alignRight ? maxW - width : 0;
+    return {
+      left,
+      top: padY + index * lineHeight,
+      right: left + width,
+      bottom: padY + (index + 1) * lineHeight,
+    };
+  });
+
+  const path = buildSteppedOutline(rects, radius);
+  svg.setAttribute("viewBox", `0 0 ${maxW} ${totalH}`);
+  svg.style.width = `${maxW}px`;
+  svg.style.height = `${totalH}px`;
+  pathEl.setAttribute("d", path);
+
+  if (linesWrap) {
+    linesWrap.style.width = `${maxW}px`;
+    lineEls.forEach((line, index) => {
+      const inset = alignRight ? maxW - lineWidths[index] : 0;
+      line.style.marginLeft = `${inset}px`;
+    });
+  }
+}
+
 function applyLabelContent(labelEl) {
   const rawText = (labelEl.dataset.fullText ?? labelEl.textContent).trim();
   labelEl.dataset.fullText = rawText;
   const words = rawText.split(/\s+/).filter(Boolean);
   const lines = splitWordsByMaxChars(words, annotationMaxCharsPerLine);
   const useStack = lines.length > 1;
-  const layoutKey = useStack ? `${lines.join("|")}:stack` : rawText;
+  const layoutKey = useStack ? `${lines.join("|")}:stack-v4` : rawText;
 
   if (labelEl.dataset.layoutKey === layoutKey) {
     return useStack;
   }
 
   labelEl.dataset.layoutKey = layoutKey;
+
   if (useStack) {
     labelEl.classList.add("annotation__label--stacked");
-    labelEl.replaceChildren(
-      ...lines.map((line) => {
-        const span = document.createElement("span");
-        span.className = "annotation__word";
-        span.textContent = line;
-        return span;
+    const inner = document.createElement("span");
+    inner.className = "annotation__label-inner";
+
+    const svg = document.createElementNS(labelShapeNs, "svg");
+    svg.classList.add("annotation__label-bg");
+    svg.setAttribute("aria-hidden", "true");
+    const shape = document.createElementNS(labelShapeNs, "path");
+    shape.classList.add("annotation__label-shape");
+    svg.appendChild(shape);
+
+    const linesWrap = document.createElement("span");
+    linesWrap.className = "annotation__label-lines";
+    linesWrap.replaceChildren(
+      ...lines.map((line, index) => {
+        const lineEl = document.createElement("span");
+        lineEl.className = "annotation__line";
+        lineEl.style.setProperty("--line-delay", `${index * 0.17}s`);
+        const textEl = document.createElement("span");
+        textEl.className = "annotation__word-text";
+        textEl.textContent = line;
+        lineEl.appendChild(textEl);
+        return lineEl;
       }),
     );
+
+    inner.appendChild(svg);
+    inner.appendChild(linesWrap);
+    labelEl.replaceChildren(inner);
   } else {
     labelEl.classList.remove("annotation__label--stacked");
-    labelEl.textContent = rawText;
+    let inner = labelEl.querySelector(".annotation__label-inner");
+    if (!inner) {
+      inner = document.createElement("span");
+      inner.className = "annotation__label-inner";
+    }
+    const textEl = document.createElement("span");
+    textEl.className = "annotation__word-text";
+    textEl.textContent = rawText;
+    inner.replaceChildren(textEl);
+    labelEl.replaceChildren(inner);
   }
 
   return useStack;
@@ -770,6 +938,9 @@ function fitAnnotationLabel(annotationEl, elbow, preferredSide, viewportW, viewp
 
   for (const attempt of tries) {
     annotationEl.dataset.side = attempt.side;
+    if (labelEl.classList.contains("annotation__label--stacked")) {
+      updateStackedLabelShape(labelEl, attempt.side === "left");
+    }
     const labelX = elbow.x + (attempt.side === "right" ? attempt.horizLen : -attempt.horizLen);
     const box = measureLabelBox(labelEl, labelX, labelY, attempt.side);
 
@@ -922,8 +1093,9 @@ function setPointerFromEvent(event) {
 }
 
 function updateHoverFromPointer() {
-  if (!pointerInside || isDragging) {
+  if (!pointerInside) {
     targetHover = 0;
+    isOverMainSphere = false;
     canvas.classList.remove("is-active");
     return;
   }
@@ -936,9 +1108,11 @@ function updateHoverFromPointer() {
   localRay.set(localRayOrigin, localRayDirection);
   const hit = localRay.intersectSphere(localRaycastSphere, targetHoverPoint);
 
+  isOverMainSphere = Boolean(hit);
+
   if (hit) {
     hoverPoint.copy(targetHoverPoint);
-    targetHover = 1;
+    targetHover = isDragging ? 0 : 1;
     canvas.classList.add("is-active");
   } else {
     targetHover = 0;
@@ -957,6 +1131,12 @@ function clampSpinVelocity() {
 }
 
 function onPointerDown(event) {
+  setPointerFromEvent(event);
+  updateHoverFromPointer();
+  if (!isOverMainSphere) {
+    return;
+  }
+
   isDragging = true;
   dragPointerId = event.pointerId;
   lastDragX = event.clientX;
@@ -1017,6 +1197,7 @@ function clearPointer(event) {
 
   pointerInside = false;
   targetHover = 0;
+  isOverMainSphere = false;
   canvas.classList.remove("is-active");
 }
 
@@ -1040,14 +1221,14 @@ function animate(now) {
       if (t < 1) allDone = false;
       layerIntroProgress[i] = t;
       const entry = maturationLayers[i];
-      // Per-particle color fades carry the reveal; global opacity just ramps up fast.
-      entry.sliceMaterial.opacity = entry.config.opacity * easeOutCubic(clamp01(t * 2.2));
+      // Per-particle color fades carry the reveal; global opacity ramps quickly.
+      entry.sliceMaterial.opacity = entry.config.opacity * easeOutCubic(clamp01(t * 3.2));
     }
 
     const mt = clamp01((introElapsed - mainIntroOffset) / introLayerDuration);
     if (mt < 1) allDone = false;
     mainIntroProgress = mt;
-    material.opacity = MAIN_TARGET_OPACITY * easeOutCubic(clamp01(mt * 2.2));
+    material.opacity = MAIN_TARGET_OPACITY * easeOutCubic(clamp01(mt * 3.2));
 
     if (!introAnnotationsReady && mt > 0.75) {
       introAnnotationsReady = true;
