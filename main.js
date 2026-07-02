@@ -528,7 +528,6 @@ const hoverViewDir = new THREE.Vector3();
 const labelWorldPosition = new THREE.Vector3();
 const labelScreenPosition = new THREE.Vector3();
 const sphereCenterWorld = new THREE.Vector3();
-const sphereCenterScreen = new THREE.Vector3();
 const hotspotWorldNormal = new THREE.Vector3();
 const hotspotToCamera = new THREE.Vector3();
 
@@ -608,11 +607,12 @@ function createRandomHotspots(count, minAngle) {
   const list = [];
   const minDot = Math.cos(minAngle);
   const maxAttempts = count * 120;
+  const direction = new THREE.Vector3();
 
   for (let attempt = 0; attempt < maxAttempts && list.length < count; attempt += 1) {
     const theta = Math.random() * Math.PI * 2;
     const phi = Math.acos(2 * Math.random() - 1);
-    const direction = new THREE.Vector3(
+    direction.set(
       Math.sin(phi) * Math.cos(theta),
       Math.cos(phi),
       Math.sin(phi) * Math.sin(theta),
@@ -624,7 +624,7 @@ function createRandomHotspots(count, minAngle) {
     }
 
     list.push({
-      direction,
+      direction: direction.clone(),
       seed: Math.random() * Math.PI * 2,
       labelEl: null,
     });
@@ -1011,8 +1011,7 @@ function hideAnnotation(annotationEl) {
   annotationEl.classList.add("is-exiting");
 }
 
-function updateHotspots() {
-  const rect = canvas.getBoundingClientRect();
+function updateHotspots(rect = canvas.getBoundingClientRect()) {
   const { width, height } = rect;
 
   mainLayer.getWorldPosition(sphereCenterWorld);
@@ -1100,7 +1099,7 @@ function setPointerFromEvent(event) {
   pointerInside = x >= 0 && x <= 1 && y >= 0 && y <= 1;
 }
 
-function updateHoverFromPointer() {
+function updateHoverFromPointer(rect = canvas.getBoundingClientRect()) {
   if (!pointerInside) {
     targetHover = 0;
     isOverMainSphere = false;
@@ -1108,12 +1107,10 @@ function updateHoverFromPointer() {
     return;
   }
 
-  const rect = canvas.getBoundingClientRect();
   const pointerX = (pointer.x * 0.5 + 0.5) * rect.width;
   const pointerY = (-pointer.y * 0.5 + 0.5) * rect.height;
   const hoverReady = introComplete || mainIntroProgress >= hoverIntroMinProgress;
 
-  particles.updateMatrixWorld();
   sphereCenterWorld.setFromMatrixPosition(particles.matrixWorld);
   sphereEdgeWorld.copy(sphereEdgeLocal).applyMatrix4(particles.matrixWorld);
   const centerScreen = projectToCanvas(sphereCenterWorld, rect);
@@ -1244,6 +1241,10 @@ function smoothstep(edge0, edge1, value) {
 }
 
 function animate(now) {
+  if (!isAppRunning) {
+    return;
+  }
+
   const elapsed = now * 0.001;
   const delta = Math.min((now - lastFrame) * 0.001, 0.05);
   lastFrame = now;
@@ -1305,8 +1306,9 @@ function animate(now) {
   }
 
   particles.updateMatrixWorld();
-  updateHoverFromPointer();
-  updateHotspots();
+  const frameRect = canvas.getBoundingClientRect();
+  updateHoverFromPointer(frameRect);
+  updateHotspots(frameRect);
 
   localHoverPoint.copy(hoverPoint);
 
@@ -1545,10 +1547,64 @@ function animate(now) {
   }
 
   renderer.render(scene, camera);
-  requestAnimationFrame(animate);
+  animationFrameId = requestAnimationFrame(animate);
+}
+
+let isAppRunning = true;
+let isDisposed = false;
+let animationFrameId = 0;
+
+function dispose() {
+  if (isDisposed) {
+    return;
+  }
+
+  isDisposed = true;
+  isAppRunning = false;
+  cancelAnimationFrame(animationFrameId);
+
+  window.removeEventListener("resize", resize);
+  window.removeEventListener("pagehide", dispose);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  canvas.removeEventListener("pointerdown", onPointerDown);
+  canvas.removeEventListener("pointermove", onPointerMove);
+  canvas.removeEventListener("pointerup", onPointerUp);
+  canvas.removeEventListener("pointerleave", clearPointer);
+  canvas.removeEventListener("pointercancel", clearPointer);
+
+  geometry.dispose();
+  material.map?.dispose();
+  material.dispose();
+
+  for (const entry of maturationLayers) {
+    entry.sliceParticles.geometry.dispose();
+    entry.sliceMaterial.dispose();
+  }
+
+  renderer.dispose();
+}
+
+function onVisibilityChange() {
+  if (isDisposed) {
+    return;
+  }
+
+  if (document.hidden) {
+    isAppRunning = false;
+    cancelAnimationFrame(animationFrameId);
+    return;
+  }
+
+  if (!isAppRunning) {
+    isAppRunning = true;
+    lastFrame = performance.now();
+    animationFrameId = requestAnimationFrame(animate);
+  }
 }
 
 window.addEventListener("resize", resize);
+window.addEventListener("pagehide", dispose);
+document.addEventListener("visibilitychange", onVisibilityChange);
 canvas.addEventListener("pointerdown", onPointerDown);
 canvas.addEventListener("pointermove", onPointerMove);
 canvas.addEventListener("pointerup", onPointerUp);
@@ -1572,4 +1628,4 @@ geometry.attributes.position.needsUpdate = true;
 colors.fill(0);
 geometry.attributes.color.needsUpdate = true;
 
-requestAnimationFrame(animate);
+animationFrameId = requestAnimationFrame(animate);
